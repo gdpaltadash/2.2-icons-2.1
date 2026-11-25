@@ -5,11 +5,13 @@
 #include <Geode/modify/PlayLayer.hpp>
 #include <Geode/modify/MenuLayer.hpp>
 #include <Geode/modify/LevelEditorLayer.hpp>
+#include <Geode/modify/CCSpriteBatchNode.hpp>
 
 #include "icons.hpp"
 
 #include <Windows.h>
 #include <vector>
+#include <unordered_map>
 
 using namespace geode::prelude;
 
@@ -142,10 +144,27 @@ static void refreshFrames(CCNode* node) {
 	}
 }
 
+// player batch -> the plain node that replaced it. Sprites the game adds to the
+// batch later (ghost trail, effects) are sent to the plain node instead.
+static std::unordered_map<CCSpriteBatchNode*, CCNode*> g_redirect;
+
+static CCNode* redirectFor(CCSpriteBatchNode* batch) {
+	auto it = g_redirect.find(batch);
+	if (it == g_redirect.end()) return nullptr;
+	CCNode* holder = it->second;
+	// the layer is gone (or the address was reused by another batch): forget it
+	if (!holder->getParent() || holder->getParent() != batch->getParent()) {
+		holder->release();
+		g_redirect.erase(it);
+		return nullptr;
+	}
+	return holder;
+}
+
 static void unbatch(CCNode* node) {
 	auto batch = dynamic_cast<CCSpriteBatchNode*>(node);
 	if (!batch || !batch->getParent()) return;
-	if (!batch->getChildren() || batch->getChildrenCount() == 0) return;
+	if (redirectFor(batch)) return; // already done
 
 	auto parent = batch->getParent();
 	auto holder = CCNode::create();
@@ -157,6 +176,11 @@ static void unbatch(CCNode* node) {
 
 	ccBlendFunc blend = batch->getBlendFunc();
 	bool additive = blend.dst == GL_ONE;
+
+	holder->retain();
+	g_redirect[batch] = holder;
+
+	if (!batch->getChildren()) return;
 
 	// CCArray::createWithArray / copy() deep-copies (calls copy() on every node,
 	// which nodes do not support): take a plain list of the children instead
@@ -193,6 +217,39 @@ static void unbatchPlayers(GJBaseGameLayer* layer) {
 		if (!seen) unbatch(targets[i]);
 	}
 }
+
+class $modify(CCSpriteBatchNode) {
+	void addChild(CCNode* child, int z, int tag) {
+		if (auto holder = redirectFor(this)) {
+			holder->addChild(child, z, tag);
+			ccBlendFunc blend = this->getBlendFunc();
+			if (blend.dst == GL_ONE) setBlendRecursive(child, blend);
+			refreshFrames(child);
+			return;
+		}
+		CCSpriteBatchNode::addChild(child, z, tag);
+	}
+
+	void removeChild(CCNode* child, bool cleanup) {
+		if (auto holder = redirectFor(this)) {
+			if (child && child->getParent() == holder) {
+				holder->removeChild(child, cleanup);
+				return;
+			}
+		}
+		CCSpriteBatchNode::removeChild(child, cleanup);
+	}
+
+	void reorderChild(CCNode* child, int z) {
+		if (auto holder = redirectFor(this)) {
+			if (child && child->getParent() == holder) {
+				holder->reorderChild(child, z);
+				return;
+			}
+		}
+		CCSpriteBatchNode::reorderChild(child, z);
+	}
+};
 
 class $modify(PlayLayer) {
 	bool init(GJGameLevel* level) {
