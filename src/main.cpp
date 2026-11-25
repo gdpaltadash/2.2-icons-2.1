@@ -12,6 +12,7 @@
 
 #include <Windows.h>
 #include <vector>
+#include <cstring>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -41,10 +42,29 @@ static void loadSaiModPack() {
 		log::info("SaiModPack is already loaded");
 		return;
 	}
+
+	// SaiModPack puts a raw 6-byte jmp on PlayLayer::update, on top of the hooks
+	// of Geode mods / Mega Hack that are already there. That breaks Mega Hack's
+	// FPS counter. Its garage does not need that hook, so the bytes that were
+	// there before Sai are put back after loading it.
+	uint8_t* update = reinterpret_cast<uint8_t*>(geode::base::get() + 0x2029c0); // PlayLayer::update
+	constexpr size_t N = 16;
+	uint8_t before[N];
+	std::memcpy(before, update, N);
+
 	auto path = dirs::getGameDir() / "extensions" / "SaiModPack.dll";
 	HMODULE h = LoadLibraryW(path.wstring().c_str());
-	if (h) log::info("Loaded {}", path.string());
-	else log::error("Could not load {} (error {})", path.string(), GetLastError());
+	if (!h) {
+		log::error("Could not load {} (error {})", path.string(), GetLastError());
+		return;
+	}
+	log::info("Loaded {}", path.string());
+
+	if (Mod::get()->getSettingValue<bool>("sai-skip-update") && std::memcmp(before, update, N) != 0) {
+		auto res = Mod::get()->patch(update, ByteVector(before, before + N));
+		if (res) log::info("Removed SaiModPack's PlayLayer::update hook");
+		else log::error("Could not remove SaiModPack's PlayLayer::update hook: {}", res.unwrapErr());
+	}
 }
 
 $on_mod(Loaded) {
