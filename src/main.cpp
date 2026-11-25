@@ -284,6 +284,31 @@ namespace {
 }
 
 class $modify(CCSprite) {
+	// A batched player sprite answers with the batch texture (GJ_GameSheet02)
+	// although it shows a 2.2 icon. Whoever copies it (ghost trail, death
+	// effect...) would get the wrong texture, so the real one is returned.
+	CCTexture2D* getTexture() {
+		if (!g_frameTex.empty()) {
+			auto it = g_frameTex.find(this);
+			if (it != g_frameTex.end() && it->second) return it->second;
+		}
+		return CCSprite::getTexture();
+	}
+
+	CCSpriteFrame* displayFrame() {
+		auto frame = CCSprite::displayFrame();
+		if (!frame || g_frameTex.empty()) return frame;
+		auto it = g_frameTex.find(this);
+		if (it == g_frameTex.end() || !it->second || frame->getTexture() == it->second) return frame;
+		return CCSpriteFrame::createWithTexture(
+			it->second,
+			frame->getRectInPixels(),
+			frame->isRotated(),
+			frame->getOffsetInPixels(),
+			frame->getOriginalSizeInPixels()
+		);
+	}
+
 	void setDisplayFrame(CCSpriteFrame* frame) {
 		CCSprite::setDisplayFrame(frame);
 		// a batched sprite whose frame is on another texture than the batch:
