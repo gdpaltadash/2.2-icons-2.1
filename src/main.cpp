@@ -6,12 +6,16 @@
 #include <Geode/modify/MenuLayer.hpp>
 #include <Geode/modify/LevelEditorLayer.hpp>
 #include <Geode/modify/CCSpriteBatchNode.hpp>
+#include <Geode/modify/CCSprite.hpp>
 
 #include "icons.hpp"
 
 #include <Windows.h>
 #include <vector>
 #include <unordered_map>
+#include <unordered_set>
+#include <utility>
+#include <cstddef>
 
 using namespace geode::prelude;
 
@@ -115,157 +119,156 @@ class $modify(PlayerObject) {
 // ---------------------------------------------------------------------------
 // In-game drawing
 // ---------------------------------------------------------------------------
-// GD 2.1 draws the players through CCSpriteBatchNodes that use one texture
-// (GJ_GameSheet02). Every 2.2 icon has its own texture, so inside those batches
-// it is drawn with the wrong texture -> broken icons. The children of the
-// player batches are moved into plain nodes at the same place / z order, where
-// each sprite is drawn with its own texture.
-static void setBlendRecursive(CCNode* node, ccBlendFunc const& blend) {
-	if (auto sprite = dynamic_cast<CCSprite*>(node)) sprite->setBlendFunc(blend);
-	if (auto kids = node->getChildren()) {
-		for (unsigned i = 0; i < kids->count(); ++i) {
-			setBlendRecursive(static_cast<CCNode*>(kids->objectAtIndex(i)), blend);
+// GD 2.1 draws the players through CCSpriteBatchNodes (m_batchNodePlayer, ...)
+// that draw everything with one texture (GJ_GameSheet02). Every 2.2 icon has its
+// own texture, so inside those batches it comes out broken.
+//
+// The players stay in their batches (the game, Mega Hack's hitboxes etc. expect
+// that); only the drawing of batches that mix textures is replaced: every sprite is drawn
+// on its own with its own texture, using the quad the batch already computed.
+namespace {
+	// batches that contain at least one sprite on another texture (players,
+	// ghost trail...). They are drawn sprite by sprite. Drawing a normal batch
+	// this way is still correct, only slower, so stale entries are harmless.
+	std::unordered_set<CCSpriteBatchNode*> g_mixed;
+
+	// texture of the frame each such sprite shows. A batched sprite ignores
+	// setTexture(), so getTexture() can be the batch texture.
+	std::unordered_map<CCSprite*, CCTexture2D*> g_frameTex;
+
+	void markMixed(CCNode* node, CCSpriteBatchNode* batch) {
+		auto s = dynamic_cast<CCSprite*>(node);
+		if (!s) return;
+		if (s->getTexture() && s->getTexture() != batch->getTexture()) g_mixed.insert(batch);
+		if (auto kids = s->getChildren()) {
+			for (unsigned i = 0; i < kids->count(); ++i) {
+				markMixed(static_cast<CCNode*>(kids->objectAtIndex(i)), batch);
+			}
 		}
 	}
-}
 
-// a sprite that was inside a batch keeps texture coordinates computed for the
-// batch texture: re-apply its frame so they are computed for its own texture
-static void refreshFrames(CCNode* node) {
-	if (auto sprite = dynamic_cast<CCSprite*>(node)) {
-		if (sprite->getTexture()) {
-			if (auto frame = sprite->displayFrame()) sprite->setDisplayFrame(frame);
+	CCTexture2D* textureOf(CCSprite* s) {
+		auto it = g_frameTex.find(s);
+		if (it != g_frameTex.end()) return it->second;
+		return s->getTexture();
+	}
+
+	// same math as CCSprite::setTextureCoords, but for the sprite's own texture
+	void fixTexCoords(CCSprite* s, CCTexture2D* tex, ccV3F_C4B_T2F_Quad& q) {
+		float W = static_cast<float>(tex->getPixelsWide());
+		float H = static_cast<float>(tex->getPixelsHigh());
+		if (W <= 0 || H <= 0) return;
+		CCRect r = CC_RECT_POINTS_TO_PIXELS(s->getTextureRect());
+		float left, right, top, bottom;
+		if (s->isTextureRectRotated()) {
+			left = r.origin.x / W;
+			right = (r.origin.x + r.size.height) / W;
+			top = r.origin.y / H;
+			bottom = (r.origin.y + r.size.width) / H;
+			if (s->isFlipX()) std::swap(top, bottom);
+			if (s->isFlipY()) std::swap(left, right);
+			q.bl.texCoords = { left, top };
+			q.br.texCoords = { left, bottom };
+			q.tl.texCoords = { right, top };
+			q.tr.texCoords = { right, bottom };
+		} else {
+			left = r.origin.x / W;
+			right = (r.origin.x + r.size.width) / W;
+			top = r.origin.y / H;
+			bottom = (r.origin.y + r.size.height) / H;
+			if (s->isFlipX()) std::swap(left, right);
+			if (s->isFlipY()) std::swap(top, bottom);
+			q.bl.texCoords = { left, bottom };
+			q.br.texCoords = { right, bottom };
+			q.tl.texCoords = { left, top };
+			q.tr.texCoords = { right, top };
 		}
 	}
-	if (auto kids = node->getChildren()) {
-		for (unsigned i = 0; i < kids->count(); ++i) {
-			refreshFrames(static_cast<CCNode*>(kids->objectAtIndex(i)));
+
+	bool emptyQuad(ccV3F_C4B_T2F_Quad const& q) {
+		return q.tl.vertices.x == 0 && q.tl.vertices.y == 0
+			&& q.br.vertices.x == 0 && q.br.vertices.y == 0
+			&& q.tr.vertices.x == 0 && q.bl.vertices.x == 0;
+	}
+}
+
+class $modify(CCSprite) {
+	void setDisplayFrame(CCSpriteFrame* frame) {
+		CCSprite::setDisplayFrame(frame);
+		// a batched sprite whose frame is on another texture than the batch:
+		// remember the real texture (frames are set while the player is built,
+		// before we know which batches are the player ones, so no check here)
+		auto batch = this->getBatchNode();
+		if (frame && batch && frame->getTexture() != batch->getTexture()) {
+			g_frameTex[this] = frame->getTexture();
+			g_mixed.insert(batch);
+		} else if (!g_frameTex.empty()) {
+			g_frameTex.erase(this);
 		}
 	}
-}
-
-// player batch -> the plain node that replaced it. Sprites the game adds to the
-// batch later (ghost trail, effects) are sent to the plain node instead.
-static std::unordered_map<CCSpriteBatchNode*, CCNode*> g_redirect;
-
-static CCNode* redirectFor(CCSpriteBatchNode* batch) {
-	auto it = g_redirect.find(batch);
-	if (it == g_redirect.end()) return nullptr;
-	CCNode* holder = it->second;
-	// the layer is gone (or the address was reused by another batch): forget it
-	if (!holder->getParent() || holder->getParent() != batch->getParent()) {
-		holder->release();
-		g_redirect.erase(it);
-		return nullptr;
-	}
-	return holder;
-}
-
-static void unbatch(CCNode* node) {
-	auto batch = dynamic_cast<CCSpriteBatchNode*>(node);
-	if (!batch || !batch->getParent()) return;
-	if (redirectFor(batch)) return; // already done
-
-	auto parent = batch->getParent();
-	auto holder = CCNode::create();
-	holder->setPosition(batch->getPosition());
-	holder->setScale(batch->getScale());
-	holder->setAnchorPoint(batch->getAnchorPoint());
-	holder->setVisible(batch->isVisible());
-	parent->addChild(holder, batch->getZOrder());
-
-	ccBlendFunc blend = batch->getBlendFunc();
-	bool additive = blend.dst == GL_ONE;
-
-	holder->retain();
-	g_redirect[batch] = holder;
-
-	if (!batch->getChildren()) return;
-
-	// CCArray::createWithArray / copy() deep-copies (calls copy() on every node,
-	// which nodes do not support): take a plain list of the children instead
-	std::vector<CCNode*> kids;
-	auto arr = batch->getChildren();
-	for (unsigned i = 0; i < arr->count(); ++i) {
-		auto child = static_cast<CCNode*>(arr->objectAtIndex(i));
-		if (!child) continue;
-		child->retain();
-		kids.push_back(child);
-	}
-	for (auto child : kids) {
-		int z = child->getZOrder();
-		int tag = child->getTag();
-		batch->removeChild(child, false); // also clears the batch from the sprite and its children
-		holder->addChild(child, z, tag);
-		if (additive) setBlendRecursive(child, blend);
-		refreshFrames(child);
-		child->release();
-	}
-}
-
-static void unbatchPlayers(GJBaseGameLayer* layer) {
-	CCNode* targets[5] = {
-		layer->m_batchNodePlayer,
-		layer->m_batchNodeAddPlayer,
-		layer->m_batchNodePlayerGlow,
-		layer->m_player1 ? layer->m_player1->getParent() : nullptr,
-		layer->m_player2 ? layer->m_player2->getParent() : nullptr,
-	};
-	for (int i = 0; i < 5; ++i) {
-		bool seen = false;
-		for (int j = 0; j < i; ++j) if (targets[j] == targets[i]) seen = true;
-		if (!seen) unbatch(targets[i]);
-	}
-}
+};
 
 class $modify(CCSpriteBatchNode) {
 	void addChild(CCNode* child, int z, int tag) {
-		if (auto holder = redirectFor(this)) {
-			holder->addChild(child, z, tag);
-			ccBlendFunc blend = this->getBlendFunc();
-			if (blend.dst == GL_ONE) setBlendRecursive(child, blend);
-			refreshFrames(child);
+		CCSpriteBatchNode::addChild(child, z, tag);
+		if (child) markMixed(child, this);
+	}
+
+	void draw() {
+		if (!g_mixed.count(this)) {
+			CCSpriteBatchNode::draw();
 			return;
 		}
-		CCSpriteBatchNode::addChild(child, z, tag);
-	}
+		auto kids = this->getChildren();
+		if (!kids || kids->count() == 0) return;
 
-	void removeChild(CCNode* child, bool cleanup) {
-		if (auto holder = redirectFor(this)) {
-			if (child && child->getParent() == holder) {
-				holder->removeChild(child, cleanup);
-				return;
-			}
+		// what the original draw does first: compute every quad (batch space)
+		for (unsigned i = 0; i < kids->count(); ++i) {
+			static_cast<CCSprite*>(kids->objectAtIndex(i))->updateTransform();
 		}
-		CCSpriteBatchNode::removeChild(child, cleanup);
-	}
 
-	void reorderChild(CCNode* child, int z) {
-		if (auto holder = redirectFor(this)) {
-			if (child && child->getParent() == holder) {
-				holder->reorderChild(child, z);
-				return;
-			}
+		auto shader = this->getShaderProgram();
+		if (!shader) return;
+		shader->use();
+		shader->setUniformsForBuiltins();
+		ccBlendFunc blend = this->getBlendFunc();
+		ccGLBlendFunc(blend.src, blend.dst);
+		ccGLEnableVertexAttribs(kCCVertexAttribFlag_PosColorTex);
+		glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+		auto list = this->getDescendants();
+		if (!list) return;
+		for (unsigned i = 0; i < list->count(); ++i) {
+			auto s = dynamic_cast<CCSprite*>(list->objectAtIndex(i));
+			if (!s) continue;
+			ccV3F_C4B_T2F_Quad q = s->getQuad();
+			if (emptyQuad(q)) continue; // hidden sprite
+			auto tex = textureOf(s);
+			if (!tex) continue;
+			fixTexCoords(s, tex, q);
+			ccGLBindTexture2D(tex->getName());
+
+			constexpr int stride = sizeof(ccV3F_C4B_T2F);
+			auto base = reinterpret_cast<char*>(&q);
+			glVertexAttribPointer(kCCVertexAttrib_Position, 3, GL_FLOAT, GL_FALSE, stride, base + offsetof(ccV3F_C4B_T2F, vertices));
+			glVertexAttribPointer(kCCVertexAttrib_TexCoords, 2, GL_FLOAT, GL_FALSE, stride, base + offsetof(ccV3F_C4B_T2F, texCoords));
+			glVertexAttribPointer(kCCVertexAttrib_Color, 4, GL_UNSIGNED_BYTE, GL_TRUE, stride, base + offsetof(ccV3F_C4B_T2F, colors));
+			glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 		}
-		CCSpriteBatchNode::reorderChild(child, z);
 	}
 };
 
 class $modify(PlayLayer) {
 	bool init(GJGameLevel* level) {
 		icons22::ensureEquipped();
-		if (!PlayLayer::init(level)) return false;
-		unbatchPlayers(this);
-		return true;
+		return PlayLayer::init(level);
 	}
 };
 
 class $modify(LevelEditorLayer) {
 	bool init(GJGameLevel* level) {
 		icons22::ensureEquipped();
-		if (!LevelEditorLayer::init(level)) return false;
-		unbatchPlayers(this);
-		return true;
+		return LevelEditorLayer::init(level);
 	}
 };
 
