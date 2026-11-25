@@ -7,6 +7,8 @@
 
 #include "icons.hpp"
 
+#include <Windows.h>
+
 using namespace geode::prelude;
 
 // ---------------------------------------------------------------------------
@@ -23,7 +25,23 @@ static ccColor3B* __stdcall colorForIdx22(ccColor3B* out, int idx) {
 	return out;
 }
 
+// SaiModPack.dll lives in the "extensions" folder, which Geode does not load
+// (only the old standalone Mega Hack did). Load it here if nobody else did.
+static void loadSaiModPack() {
+	if (!Mod::get()->getSettingValue<bool>("load-sai")) return;
+	if (GetModuleHandleW(L"SaiModPack.dll")) {
+		log::info("SaiModPack is already loaded");
+		return;
+	}
+	auto path = dirs::getGameDir() / "extensions" / "SaiModPack.dll";
+	HMODULE h = LoadLibraryW(path.wstring().c_str());
+	if (h) log::info("Loaded {}", path.string());
+	else log::error("Could not load {} (error {})", path.string(), GetLastError());
+}
+
 $on_mod(Loaded) {
+	loadSaiModPack();
+
 	// SaiModPack has its own color palette: the 2.2 colors can be turned off
 	if (!Mod::get()->getSettingValue<bool>("colors-22")) return;
 	uintptr_t target = geode::base::get() + 0xc8d10; // GameManager::colorForIdx
