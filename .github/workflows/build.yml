@@ -13,7 +13,7 @@ env:
 jobs:
   build:
     name: Windows (Win32)
-    runs-on: windows-latest
+    runs-on: windows-2022
 
     steps:
       - uses: actions/checkout@v4
@@ -49,6 +49,7 @@ jobs:
           -T host=x64 -A win32
           -DCMAKE_BUILD_TYPE=Release
           -DGEODE_DISABLE_CLI_CALLS=On
+          -DCMAKE_POLICY_VERSION_MINIMUM=3.5
 
       - name: Build
         shell: pwsh
