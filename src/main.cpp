@@ -12,12 +12,33 @@ using namespace geode::prelude;
 // ---------------------------------------------------------------------------
 // Colors: the 107 colors of GD 2.2 (GD 2.1 only knows 42)
 // ---------------------------------------------------------------------------
-class $modify(GameManager) {
-	ccColor3B colorForIdx(int idx) {
-		if (idx >= 0 && idx < icons22::COLOR_COUNT) return icons22::color(idx);
-		return GameManager::colorForIdx(idx);
-	}
+// In GD 2.113 colorForIdx is really a static function: the caller does not
+// pass `this`, it pushes (ccColor3B* out, int idx) and the function returns with
+// `ret 8`. The binding declares it as a member function, so a normal $modify
+// hook breaks the stack/registers (crash in MenuGameLayer). Instead the start of
+// the function is replaced with a jmp to this __stdcall function, which has the
+// exact same layout.
+static ccColor3B* __stdcall colorForIdx22(ccColor3B* out, int idx) {
+	*out = icons22::color(idx); // ids outside 0..106 give white, like the original
+	return out;
+}
 
+$on_mod(Loaded) {
+	uintptr_t target = geode::base::get() + 0xc8d10; // GameManager::colorForIdx
+	auto func = reinterpret_cast<uintptr_t>(&colorForIdx22);
+	int32_t rel = static_cast<int32_t>(func - (target + 5));
+	ByteVector bytes = {
+		0xE9,
+		static_cast<uint8_t>(rel & 0xff),
+		static_cast<uint8_t>((rel >> 8) & 0xff),
+		static_cast<uint8_t>((rel >> 16) & 0xff),
+		static_cast<uint8_t>((rel >> 24) & 0xff),
+	};
+	auto res = Mod::get()->patch(reinterpret_cast<void*>(target), bytes);
+	if (!res) log::error("colorForIdx patch failed: {}", res.unwrapErr());
+}
+
+class $modify(GameManager) {
 	// everything is unlocked
 	bool isColorUnlocked(int id, bool type) {
 		if (id >= 0 && id < icons22::COLOR_COUNT) return true;
