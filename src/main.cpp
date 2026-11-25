@@ -9,6 +9,7 @@
 #include "icons.hpp"
 
 #include <Windows.h>
+#include <vector>
 
 using namespace geode::prelude;
 
@@ -142,12 +143,19 @@ static void unbatch(CCNode* node) {
 	ccBlendFunc blend = batch->getBlendFunc();
 	bool additive = blend.dst == GL_ONE;
 
-	auto kids = CCArray::createWithArray(batch->getChildren());
-	for (unsigned i = 0; i < kids->count(); ++i) {
-		auto child = static_cast<CCNode*>(kids->objectAtIndex(i));
+	// CCArray::createWithArray / copy() deep-copies (calls copy() on every node,
+	// which nodes do not support): take a plain list of the children instead
+	std::vector<CCNode*> kids;
+	auto arr = batch->getChildren();
+	for (unsigned i = 0; i < arr->count(); ++i) {
+		auto child = static_cast<CCNode*>(arr->objectAtIndex(i));
+		if (!child) continue;
+		child->retain();
+		kids.push_back(child);
+	}
+	for (auto child : kids) {
 		int z = child->getZOrder();
 		int tag = child->getTag();
-		child->retain();
 		batch->removeChild(child, false); // also clears the batch from the sprite and its children
 		holder->addChild(child, z, tag);
 		if (additive) setBlendRecursive(child, blend);
