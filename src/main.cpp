@@ -127,6 +127,21 @@ static void setBlendRecursive(CCNode* node, ccBlendFunc const& blend) {
 	}
 }
 
+// a sprite that was inside a batch keeps texture coordinates computed for the
+// batch texture: re-apply its frame so they are computed for its own texture
+static void refreshFrames(CCNode* node) {
+	if (auto sprite = dynamic_cast<CCSprite*>(node)) {
+		if (sprite->getTexture()) {
+			if (auto frame = sprite->displayFrame()) sprite->setDisplayFrame(frame);
+		}
+	}
+	if (auto kids = node->getChildren()) {
+		for (unsigned i = 0; i < kids->count(); ++i) {
+			refreshFrames(static_cast<CCNode*>(kids->objectAtIndex(i)));
+		}
+	}
+}
+
 static void unbatch(CCNode* node) {
 	auto batch = dynamic_cast<CCSpriteBatchNode*>(node);
 	if (!batch || !batch->getParent()) return;
@@ -159,6 +174,7 @@ static void unbatch(CCNode* node) {
 		batch->removeChild(child, false); // also clears the batch from the sprite and its children
 		holder->addChild(child, z, tag);
 		if (additive) setBlendRecursive(child, blend);
+		refreshFrames(child);
 		child->release();
 	}
 }
