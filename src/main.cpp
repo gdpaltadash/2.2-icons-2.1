@@ -128,18 +128,63 @@ class $modify(PlayerObject) {
 // on its own with its own texture, using the quad the batch already computed.
 namespace {
 	// batches that contain at least one sprite on another texture (players,
-	// ghost trail...). They are drawn sprite by sprite. Drawing a normal batch
-	// this way is still correct, only slower, so stale entries are harmless.
+	// ghost trail...). They are drawn sprite by sprite.
+	// Every entry is retained: a freed batch must never be confused with a new
+	// object created at the same address (that broke Mega Hack's FPS label).
 	std::unordered_set<CCSpriteBatchNode*> g_mixed;
 
-	// texture of the frame each such sprite shows. A batched sprite ignores
-	// setTexture(), so getTexture() can be the batch texture.
+	// texture of the frame each such sprite shows (retained too). A batched
+	// sprite ignores setTexture(), so getTexture() can be the batch texture.
 	std::unordered_map<CCSprite*, CCTexture2D*> g_frameTex;
+
+	void addMixed(CCSpriteBatchNode* batch) {
+		if (dynamic_cast<CCLabelBMFont*>(batch)) return; // labels are never touched
+		if (g_mixed.insert(batch).second) batch->retain();
+	}
+
+	void setFrameTex(CCSprite* s, CCTexture2D* tex) {
+		auto it = g_frameTex.find(s);
+		if (it == g_frameTex.end()) {
+			s->retain();
+			g_frameTex.emplace(s, tex);
+		} else {
+			it->second = tex;
+		}
+	}
+
+	void eraseFrameTex(CCSprite* s) {
+		auto it = g_frameTex.find(s);
+		if (it == g_frameTex.end()) return;
+		g_frameTex.erase(it);
+		s->release();
+	}
+
+	// drop everything only we are keeping alive (the level was closed)
+	void purge() {
+		for (auto it = g_frameTex.begin(); it != g_frameTex.end();) {
+			if (it->first->retainCount() <= 1) {
+				auto s = it->first;
+				it = g_frameTex.erase(it);
+				s->release();
+			} else {
+				++it;
+			}
+		}
+		for (auto it = g_mixed.begin(); it != g_mixed.end();) {
+			if ((*it)->retainCount() <= 1) {
+				auto b = *it;
+				it = g_mixed.erase(it);
+				b->release();
+			} else {
+				++it;
+			}
+		}
+	}
 
 	void markMixed(CCNode* node, CCSpriteBatchNode* batch) {
 		auto s = dynamic_cast<CCSprite*>(node);
 		if (!s) return;
-		if (s->getTexture() && s->getTexture() != batch->getTexture()) g_mixed.insert(batch);
+		if (s->getTexture() && s->getTexture() != batch->getTexture()) addMixed(batch);
 		if (auto kids = s->getChildren()) {
 			for (unsigned i = 0; i < kids->count(); ++i) {
 				markMixed(static_cast<CCNode*>(kids->objectAtIndex(i)), batch);
@@ -199,11 +244,12 @@ class $modify(CCSprite) {
 		// remember the real texture (frames are set while the player is built,
 		// before we know which batches are the player ones, so no check here)
 		auto batch = this->getBatchNode();
-		if (frame && batch && frame->getTexture() != batch->getTexture()) {
-			g_frameTex[this] = frame->getTexture();
-			g_mixed.insert(batch);
+		if (frame && batch && frame->getTexture() != batch->getTexture()
+			&& !dynamic_cast<CCLabelBMFont*>(batch)) {
+			setFrameTex(this, frame->getTexture());
+			addMixed(batch);
 		} else if (!g_frameTex.empty()) {
-			g_frameTex.erase(this);
+			eraseFrameTex(this);
 		}
 	}
 };
@@ -211,7 +257,7 @@ class $modify(CCSprite) {
 class $modify(CCSpriteBatchNode) {
 	void addChild(CCNode* child, int z, int tag) {
 		CCSpriteBatchNode::addChild(child, z, tag);
-		if (child) markMixed(child, this);
+		if (child && !dynamic_cast<CCLabelBMFont*>(this)) markMixed(child, this);
 	}
 
 	void draw() {
@@ -260,6 +306,7 @@ class $modify(CCSpriteBatchNode) {
 
 class $modify(PlayLayer) {
 	bool init(GJGameLevel* level) {
+		purge();
 		icons22::ensureEquipped();
 		return PlayLayer::init(level);
 	}
@@ -267,6 +314,7 @@ class $modify(PlayLayer) {
 
 class $modify(LevelEditorLayer) {
 	bool init(GJGameLevel* level) {
+		purge();
 		icons22::ensureEquipped();
 		return LevelEditorLayer::init(level);
 	}
@@ -274,6 +322,7 @@ class $modify(LevelEditorLayer) {
 
 class $modify(MenuLayer) {
 	bool init() {
+		purge();
 		if (!MenuLayer::init()) return false;
 		// every 2.2 icon goes into the sprite frame cache once, so the garage of
 		// SaiModPack (which counts player_%02d_001.png etc.) shows all of them
