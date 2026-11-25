@@ -19,3 +19,6 @@ endif()
 add_subdirectory($ENV{GEODE_SDK} ${CMAKE_CURRENT_BINARY_DIR}/geode)
 
 setup_geode_mod(${PROJECT_NAME})
+
+# glDrawArrays & co. come from the system OpenGL library
+target_link_libraries(${PROJECT_NAME} opengl32)
