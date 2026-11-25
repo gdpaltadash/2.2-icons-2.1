@@ -105,6 +105,7 @@ class $modify(MenuLayer) {
 		// every 2.2 icon goes into the sprite frame cache once, so the garage of
 		// SaiModPack (which counts player_%02d_001.png etc.) shows all of them
 		icons22::preloadAll();
+		icons22::syncSaiCounters();
 		return true;
 	}
 };
