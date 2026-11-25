@@ -4,6 +4,7 @@
 #include <Geode/modify/PlayerObject.hpp>
 #include <Geode/modify/PlayLayer.hpp>
 #include <Geode/modify/MenuLayer.hpp>
+#include <Geode/modify/LevelEditorLayer.hpp>
 
 #include "icons.hpp"
 
@@ -108,12 +109,82 @@ class $modify(PlayerObject) {
 	}
 };
 
-// ship, ball and spider have no hook above: everything equipped is loaded
-// before a level starts and when the menu opens
+// ---------------------------------------------------------------------------
+// In-game drawing
+// ---------------------------------------------------------------------------
+// GD 2.1 draws the players through CCSpriteBatchNodes that use one texture
+// (GJ_GameSheet02). Every 2.2 icon has its own texture, so inside those batches
+// it is drawn with the wrong texture -> broken icons. The children of the
+// player batches are moved into plain nodes at the same place / z order, where
+// each sprite is drawn with its own texture.
+static void setBlendRecursive(CCNode* node, ccBlendFunc const& blend) {
+	if (auto sprite = dynamic_cast<CCSprite*>(node)) sprite->setBlendFunc(blend);
+	if (auto kids = node->getChildren()) {
+		for (unsigned i = 0; i < kids->count(); ++i) {
+			setBlendRecursive(static_cast<CCNode*>(kids->objectAtIndex(i)), blend);
+		}
+	}
+}
+
+static void unbatch(CCNode* node) {
+	auto batch = dynamic_cast<CCSpriteBatchNode*>(node);
+	if (!batch || !batch->getParent()) return;
+	if (!batch->getChildren() || batch->getChildrenCount() == 0) return;
+
+	auto parent = batch->getParent();
+	auto holder = CCNode::create();
+	holder->setPosition(batch->getPosition());
+	holder->setScale(batch->getScale());
+	holder->setAnchorPoint(batch->getAnchorPoint());
+	holder->setVisible(batch->isVisible());
+	parent->addChild(holder, batch->getZOrder());
+
+	ccBlendFunc blend = batch->getBlendFunc();
+	bool additive = blend.dst == GL_ONE;
+
+	auto kids = CCArray::createWithArray(batch->getChildren());
+	for (unsigned i = 0; i < kids->count(); ++i) {
+		auto child = static_cast<CCNode*>(kids->objectAtIndex(i));
+		int z = child->getZOrder();
+		int tag = child->getTag();
+		child->retain();
+		batch->removeChild(child, false); // also clears the batch from the sprite and its children
+		holder->addChild(child, z, tag);
+		if (additive) setBlendRecursive(child, blend);
+		child->release();
+	}
+}
+
+static void unbatchPlayers(GJBaseGameLayer* layer) {
+	CCNode* targets[5] = {
+		layer->m_batchNodePlayer,
+		layer->m_batchNodeAddPlayer,
+		layer->m_batchNodePlayerGlow,
+		layer->m_player1 ? layer->m_player1->getParent() : nullptr,
+		layer->m_player2 ? layer->m_player2->getParent() : nullptr,
+	};
+	for (int i = 0; i < 5; ++i) {
+		bool seen = false;
+		for (int j = 0; j < i; ++j) if (targets[j] == targets[i]) seen = true;
+		if (!seen) unbatch(targets[i]);
+	}
+}
+
 class $modify(PlayLayer) {
 	bool init(GJGameLevel* level) {
 		icons22::ensureEquipped();
-		return PlayLayer::init(level);
+		if (!PlayLayer::init(level)) return false;
+		unbatchPlayers(this);
+		return true;
+	}
+};
+
+class $modify(LevelEditorLayer) {
+	bool init(GJGameLevel* level) {
+		icons22::ensureEquipped();
+		if (!LevelEditorLayer::init(level)) return false;
+		unbatchPlayers(this);
+		return true;
 	}
 };
 
