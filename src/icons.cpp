@@ -216,6 +216,27 @@ namespace icons22 {
 		log::info("Loaded the sheets of {} icons", count);
 	}
 
+	// SaiModPack keeps how many icons of each kind exist in the game variables
+	// "10000".."10006" (cube, ship, ball, ufo, wave, robot, spider): the total is
+	// value("1000Xv2") * 256 + value("1000X"). Its garage only shows that many.
+	void syncSaiCounters() {
+		const IconType types[] = {
+			IconType::Cube, IconType::Ship, IconType::Ball, IconType::Ufo,
+			IconType::Wave, IconType::Robot, IconType::Spider,
+		};
+		auto gm = GameManager::sharedState();
+		for (int i = 0; i < 7; ++i) {
+			std::string lowKey = "1000" + std::to_string(i);
+			std::string highKey = lowKey + "v2";
+			int current = gm->getIntGameVariable(highKey.c_str()) * 256 + gm->getIntGameVariable(lowKey.c_str());
+			int total = maxId(types[i]);
+			if (current >= total) continue; // never lower what the player set
+			gm->setIntGameVariable(lowKey.c_str(), total & 0xff);
+			gm->setIntGameVariable(highKey.c_str(), total >> 8);
+			log::info("SaiModPack counter {}: {} -> {}", lowKey, current, total);
+		}
+	}
+
 	void ensureEquipped() {
 		auto gm = GameManager::sharedState();
 		ensure(IconType::Cube, gm->getPlayerFrame());

@@ -13,6 +13,9 @@ namespace icons22 {
 	// load the sheets of every 2.2 icon (so garages that count frames see them)
 	void preloadAll();
 
+	// set the icon counters of SaiModPack ("Add more icons") to the 2.2 totals
+	void syncSaiCounters();
+
 	// ensure every icon the player currently has equipped
 	void ensureEquipped();
 
