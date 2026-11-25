@@ -198,6 +198,24 @@ namespace icons22 {
 		}
 	}
 
+	void preloadAll() {
+		static bool done = false;
+		if (done) return;
+		done = true;
+		const IconType types[] = {
+			IconType::Cube, IconType::Ship, IconType::Ball, IconType::Ufo,
+			IconType::Wave, IconType::Robot, IconType::Spider,
+		};
+		int count = 0;
+		for (auto t : types) {
+			for (int id = 1; id <= maxId(t); ++id) {
+				ensure(t, id);
+				++count;
+			}
+		}
+		log::info("Loaded the sheets of {} icons", count);
+	}
+
 	void ensureEquipped() {
 		auto gm = GameManager::sharedState();
 		ensure(IconType::Cube, gm->getPlayerFrame());

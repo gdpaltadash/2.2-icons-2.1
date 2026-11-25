@@ -8,7 +8,6 @@ project(Icons22GD2113 VERSION 1.0.0)
 add_library(${PROJECT_NAME} SHARED
     src/main.cpp
     src/icons.cpp
-    src/garage.cpp
 )
 
 if (NOT DEFINED ENV{GEODE_SDK})

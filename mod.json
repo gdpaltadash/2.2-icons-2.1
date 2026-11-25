@@ -1,12 +1,20 @@
 {
 	"geode": "1.3.10",
-	"version": "v1.0.0",
+	"version": "v1.1.0",
 	"id": "local.icons22_2113",
 	"name": "Icons 2.2 (GD 2.113)",
 	"developer": "local",
-	"description": "GD 2.2 icons, colors and garage for GD 2.113.",
+	"description": "Loads the GD 2.2 icons and colors into GD 2.113 (use with SaiModPack's garage).",
 	"tags": [
 		"customization",
 		"cosmetic"
-	]
+	],
+	"settings": {
+		"colors-22": {
+			"name": "2.2 colors",
+			"description": "Replace the color table with the 107 colors of GD 2.2. Turn off to keep SaiModPack's palette. Needs a restart.",
+			"type": "bool",
+			"default": true
+		}
+	}
 }

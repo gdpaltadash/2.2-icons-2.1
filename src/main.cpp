@@ -24,6 +24,8 @@ static ccColor3B* __stdcall colorForIdx22(ccColor3B* out, int idx) {
 }
 
 $on_mod(Loaded) {
+	// SaiModPack has its own color palette: the 2.2 colors can be turned off
+	if (!Mod::get()->getSettingValue<bool>("colors-22")) return;
 	uintptr_t target = geode::base::get() + 0xc8d10; // GameManager::colorForIdx
 	auto func = reinterpret_cast<uintptr_t>(&colorForIdx22);
 	int32_t rel = static_cast<int32_t>(func - (target + 5));
@@ -100,7 +102,9 @@ class $modify(PlayLayer) {
 class $modify(MenuLayer) {
 	bool init() {
 		if (!MenuLayer::init()) return false;
-		icons22::ensureEquipped();
+		// every 2.2 icon goes into the sprite frame cache once, so the garage of
+		// SaiModPack (which counts player_%02d_001.png etc.) shows all of them
+		icons22::preloadAll();
 		return true;
 	}
 };
