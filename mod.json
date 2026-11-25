@@ -1,6 +1,6 @@
 {
 	"geode": "1.3.10",
-	"version": "v1.2.0",
+	"version": "v1.3.0",
 	"id": "local.icons22_2113",
 	"name": "Icons 2.2 (GD 2.113)",
 	"developer": "local",
@@ -10,6 +10,12 @@
 		"cosmetic"
 	],
 	"settings": {
+		"load-sai": {
+			"name": "Load SaiModPack",
+			"description": "Load extensions/SaiModPack.dll (its garage is used for the icons). Needs a restart.",
+			"type": "bool",
+			"default": true
+		},
 		"colors-22": {
 			"name": "2.2 colors",
 			"description": "Replace the color table with the 107 colors of GD 2.2. Turn off to keep SaiModPack's palette. Needs a restart.",
